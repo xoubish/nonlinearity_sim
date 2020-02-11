@@ -1,0 +1,43 @@
+SpaceSegment.Instrument.NISP.NonLinearityCorrectionCoeffs	
+EUC_NISP_H2RG-NONLINEARITY-CORRECTION-COEFFICIENTS-SPECTRO_2017-04-21T201200.00Z_01.01.fits
+
+Description : 
+
+DESCRIPTION OF THE FORMAT OF THE EUC_NISP_H2RG-NONLINEARITY-CORRECTION-COEFFICIENTS_2027*.FITS 
+Nonlinearity correction coefficients are measured for spectrometric and photo H readout mode on one representative detector. They are then simulated for the entire focal plane (16 detectors). (c.f. EUCL-IPN-TN-7-017 Ed 1 Rev 5 available on livelink) after that they are rescaled (by applying conversion gain and a suitable integration time ) to be consistent with the output of simulations OU-SIM photo and spectro (Peter Capak). 
+------------------------------------------------------------------------------------
+MODE MACC(NG, NF, ND) T_EXP T_INT T_EXP_SIM T_INT_SIM T_TOT_SIM [sec] [sec] 
+------------------------------------------------------------------------------------ 
+spectro MACC(15,16,11) 556 533 588 533 598 
+photo Y MACC(4,16,7) 120 97 128 105 138 
+photo J MACC(4,16,4) 107 85 106 83 533 
+photo H MACC(3,16,5) 82 59 105 82 115 
+------------------------------------------------------------------------------------ 
+F_E = 1.3 
+- average conversion gain [electrons/ADU] T_F = 1.41 
+- single frame read time [sec] T_EXP = [ NG*NF + (NG - 1)*ND ]*T_F 
+- total exposure time [sec] T_INT = (NG - 1) * (NF + ND )*T_F 
+- effective integration time [sec] T_EXP_SIM = T_INT_SIM + 23/55 sec (photo/spectro) 
+T_TOT_SIM = T_EXP_SIM + 10 sec Only T_INT_SIM is used in rescaling, T_EXP_SIM and T_TOT_SIM are not used and stay only for information. 
+
+For each readout mode an output file is generated: 
+==================================================================================== 
+EUC_NISP_H2RG-NONLINEARITY-CORRECTION-COEFFICIENTS-SPECTRO_2017-04-21T201200.00Z_01.01.fits 
+EUC_NISP_H2RG-NONLINEARITY-CORRECTION-COEFFICIENTS-PHOTOH_2017-04-21T201300.00Z_01.01.fits 
+EUC_NISP_H2RG-NONLINEARITY-CORRECTION-COEFFICIENTS-PHOTOY_2017-04-21T201300.00Z_01.01.fits 
+EUC_NISP_H2RG-NONLINEARITY-CORRECTION-COEFFICIENTS-PHOTOJ_2017-04-21T201300.00Z_01.01.fits 
+
+Each output file contains 16 extensions (one extension per detector): 
+H2RG_1_1 H2RG_1_2 H2RG_1_3 H2RG_1_4 H2RG_2_1 H2RG_2_2 H2RG_2_3 H2RG_2_4 H2RG_3_1 H2RG_3_2 H2RG_3_3 H2RG_3_4 H2RG_4_1 H2RG_4_2 H2RG_4_3 H2RG_4_4 
+
+Each extension is a 3D data cube with dimensions 5x2040x2040 containing in order {f_low, f_up, a0, a1, a2} where f_low and f_up are the lower and the upper signal thresholds in electrons for the nonlinearity validity range defined as f_low = 0 f_up = (59000 - 3000) * NG*(NF+ND) / [ (NG-1)*ND + NG*NF ] and the a0, a1, a2 are the rescaled ( with the scaling factor [ (NG-1)*ND + NG*NF ] * F_E also used to rescale f_low and f_up ) nonlinearity correction coefficients. 
+
+The signal corrected for nonlinearity S_NISP_lin [electrons] is defined as 
+
+S_NISP_lin = a0 + a1 S_NISP + a2 (S_NISP)^2
+
+where S_NISP [electrons] is the signal computed by a LSF to an exposure in MACC(XX,YY,ZZ).
+
+
+Source : Input by Anne Ealet/Bogna Kubik/Richard Capak See technical note : EUCL-IPN-TN-7-017 Ed 1 Rev 5 21/03/2017
+Release : 1.0

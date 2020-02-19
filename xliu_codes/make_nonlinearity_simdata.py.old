@@ -1,0 +1,258 @@
+#!/usr/bin/evn python
+"""
+Module to create simulation data for the Non-linearity calibration pipeline.
+
+Ref: Deriving the nonlinearity correction function, Short version, EUCL-IPN-TN-7-017
+"""
+
+from NMLogging import get_logger
+
+from astropy.io import fits
+import numpy as np
+import pandas as pd
+import random
+import sys
+
+#readout time, how often a frame is generated (on board? or on ground?)
+TREAD = 1.4548    #seconds
+
+#read noise (TBD), e-
+#TODO should be drawn randomly for each pixel and each exposure, it’s somewhere between 4 and 12 e-
+ReadNoise = 8
+
+#pixel gain, assuming it's constant across the detector
+Gain = 1   #e-/ADU
+
+#detector IDs in the non-linearity coefficients data
+detids = ['H2RG_1_1','H2RG_1_2','H2RG_1_3','H2RG_1_4',
+          'H2RG_2_1','H2RG_2_2','H2RG_2_3','H2RG_2_4',
+          'H2RG_3_1','H2RG_3_2','H2RG_3_3','H2RG_3_4',
+          'H2RG_4_1','H2RG_4_2','H2RG_4_3','H2RG_4_4']
+
+def read_exp_table(exposure_table_file):
+    #read in the exposures table
+    names = ['n_exposures', 'flux', 'utr']
+    df_exp = pd.read_csv(exposure_table_file, names=names, delim_whitespace=True, skiprows=1)
+    return df_exp
+ 
+def read_nonlinear_coef(nonlinearcoef_file, detector_name):
+    """
+     Read non-linearity coefficients one detector at a time
+
+     nonlinearcoef_file -- name the non-linearity coefficients file
+     detector_name -- dectector name in string, such as ''H2RG_2_4'
+                      The order of the detector in the array is:
+                ['H2RG_1_1','H2RG_1_2','H2RG_1_3','H2RG_1_4',
+                 'H2RG_2_1','H2RG_2_2','H2RG_2_3','H2RG_2_4',
+                 'H2RG_3_1','H2RG_3_2','H2RG_3_3','H2RG_3_4',
+                 'H2RG_4_1','H2RG_4_2','H2RG_4_3','H2RG_4_4']
+    """
+    hdulist = fits.open(nonlinearcoef_file)
+    extnames = [hdulist[i].header['EXTNAME'] for i in range(1, len(hdulist))]
+    ind = extnames.index(detector_name)
+    coef = hdulist[ind+1].data   #detector HDU starts at 1
+    hdulist.close()
+
+    return coef
+
+def write_fits(outfile, data):
+    primary_hdu = fits.PrimaryHDU()
+    hdul =  fits.HDUList([primary_hdu])
+    #hdu = fits.ImageHDU(data=data, header=hdr, name=extname)
+    hdu = fits.ImageHDU(data=data)
+    hdul.append(hdu)
+   
+    hdul.writeto(outfile)
+
+def make_sim(flux, nread, iexp, nonlinearcoef_file, satlevel=65535):
+    """
+     Generate simulation data per exposure (per exposure, per read/UTR).  
+     For another exposure run, just re-run this function to get another
+     series of simulation data given (flux, nread).
+
+     flux -- (e-/s), measured flux from the lamp for a given pixel.  ADU/frame???
+     nread -- number of reads since the start of the exposure
+     iexp -- exposure count for this UTR
+
+     iexp, flux and nread are the numbers in the 1st, 2nd and 3rd columns in Table 2 from the Ref (see the comments at the top).
+
+     satlevel -- saturation level, can be a map
+
+     #flux = 19     #ADU/frame
+     #nread = 400
+    """
+
+    for i in range(1, nread+1):
+        logger.info("Looping through UTR {}".format(i))
+
+        #primary_hdu = fits.PrimaryHDU(header=hdus[0].header)
+        primary_hdu = fits.PrimaryHDU()
+        outhdus =  fits.HDUList([primary_hdu])
+
+        #loop all 16 detectors
+        ndet = 1
+        logger.info("Looping through all 16 detectors")
+        for idet in range(ndet):
+            detid = detids[idet]
+            logger.info("Looping through the detector {}, {}".format(idet+1, detid)) 
+            coef = read_nonlinear_coef(nonlinearcoef_file, detid)
+            print("done coef")
+
+            flux_actual = np.zeros((2048, 2048))
+            #start with the measured flux, constant spatially but varying temporally
+            flux_actual[4:2044,4:2044] = flux * TREAD * i  #fill data region with measured flux, (ADU/f) * s = ADU ???
+            flux_actual *= Gain   #e-??
+            logger.info("Filled with measured flux")
+
+            #calculate nonlinearity from calibration data, varing spatially but not temporally, unit e-??
+            flux_nonlinear = make_nonlinear(flux_actual, coef) 
+            logger.info("Made non-linearized flux")
+            print("done make nonlinear")
+
+            #add pedestal, constant spatially very varying temporally
+            pedestal = random.randint(0, 1000)  #set the random pedistal (between 0 - 1000) for this exposure, unit e-??
+            flux_nonlinear[:, :] += pedestal    #add the pedestal to all of the data including the reference pixels.
+            logger.info("Added pedestal")
+
+            #add noise (e-)
+            readnoise_array = np.random.normal(size=[2048,2048]) * ReadNoise  #generate the read noise, the reference pixels should also have noise. 
+            flux_nonlinear += readnoise_array      #add the read noise to the data array
+            logger.info("Added read noise")
+
+            # set any pixel above the saturation limit to the saturation limit.
+            # This can set to 65535 for all pixels for now, but should be able to 
+            # take a map since this will vary pixel to pixel.  
+            ind = np.where(flux_nonlinear > satlevel)
+            flux_nonlinear[ind] = satlevel
+            logger.info("Checked saturation level")
+
+            #add this dector to the final simulated data
+            hdu = fits.ImageHDU(data=flux_nonlinear, name=detid)
+            outhdus.append(hdu)
+            print("appended hdu")
+
+        #write the sim data for this UTR
+        outfile = "sim_data2/exposure_" + str(iexp) + "utr_" + str(i) + ".fits"
+        logger.info("Writing sim data to: {}".format(outfile))
+        outhdus.writeto(outfile)
+
+def make_nonlinear(flux_actual, non_linear_coefficients):
+    """
+     Make flux non-linear.
+
+     This function is the inverse of the apply module function.
+     So basically we want to do the math in the apply module backwards to
+     un-apply the calibration.  For now we can use the current calibration files.
+
+     flux_actual -- 2D numpy array (2048, 2048), measured flux
+     non_linear_coefficients -- non-linearity coefficients, 3D numpy array (5,2040,2040)
+
+     The return is a non-linearized flux, 2D numpy array (2048,2048).
+
+    Values = range(0,65535,128)
+    Linear_flux = values*nl_correct(values,non_linear_coefficents) #run values through non-linear calibration module function
+    Polynomial = fit_poly(linear_flux,values,2) # fit a 2nd order polynomial to to predict values (the input above) 
+                                                # if given the output  from the calibration module.there should be one polynomial per pixel. 
+
+    Now once we have the above polynomial what make_nonlinear will do is:
+
+    Simulated_value = polynomial(flux_actual)
+
+    #So basically, what we are doing is running the non-linearity correction backwards to see
+    # if the calibration module can re-create the calibration files from the simulated data. 
+    """
+
+    flux_nonlinear = np.full_like(flux_actual, 0.0)
+    dims = flux_actual.shape
+
+    #random sampling some numbers as the non-linear data, with dimension [2040,2040, nsamples]
+    print("make samples")
+    nsamples = 500
+    #x = range(0, 65535, 128)
+    xx = np.random.rand(2040,2040,nsamples) * 65535
+    
+    #correct non-linearity using exiting non-linearity-coefficients
+    print("correction...")
+    linear_xx = np.multiply(xx, correct_nonlinear(xx, non_linear_coefficients))
+
+    print("polyfit...")
+    #loop each pixel
+    pixels = [[500, 355],[1820,2000]]
+    #for i in range(4, dims[0]-4):    #the non-linear coeffcients are only in the center [2040,2040] pixels
+    #  for j in range(4, dims[1]-4):
+    for pix in pixels:
+         i = pix[0]
+         j = pix[1]
+         #do ploynomial fit to the above non-linear data
+         linear_x = linear_xx[i-4, j-4, :]
+         x = xx[i-4, j-4, :]
+         polynomial_coef = np.polyfit(linear_x, x, 2)
+
+         #simulate a non-linear data
+         p = np.poly1d(polynomial_coef)
+         flux_nonlinear[i,j] = p(flux_actual[i,j])
+
+    return flux_nonlinear
+
+def correct_nonlinear(x, non_linear_coefficients):
+    """
+     Correct the non-linearity using given coefficients
+
+     x -- data to be corrected, 3D numpy array [2040,2040,nsamples]
+     non_linear_coefficients -- coefficients and min/max range, 3D numpy array [5, 2040, 2040]
+
+     Compare the apply module, we are NOT checking the saturation, nor no-corection if the x<0
+
+     Returns:
+     corrected -- 3D numpy array, corrected data
+    """
+    dims = x.shape
+    coef = non_linear_coefficients[2:,:,:]
+    norder = (coef.shape)[0]
+    corrected = np.zeros((dims))
+    res = np.zeros((dims[0], dims[1]))
+
+    for i in range(dims[2]):
+        for order in range(norder):
+            res += coef[order, :,:] * np.power(x[:,:,i], order)
+
+        corrected[:,:,i] = res
+
+    return corrected 
+
+def execute(exposure_table_file, nonlinearcoef_file):
+    logger.info("Read the exposure table..")
+    exp_tbl = read_exp_table(exposure_table_file)
+
+    #loop Table 2
+    #for row in exp_tbl.iterrow():
+    if 1 == 1:
+        row = exp_tbl.iloc[0]
+        logger.info("Looping through the exposure row {}".format(row))
+        nexp = row.n_exposures
+        flux = row.flux
+        utr  = row.utr
+
+        #loop 'N exposures' in 1st column of Table 2
+        for iexp in range(nexp):
+            logger.info("Looping through the exposure {}".format(iexp+1)) 
+            make_sim(flux, utr, iexp+1, nonlinearcoef_file)
+
+if __name__ == "__main__":
+
+   #log
+   logger = get_logger("MakeNonlinearity", 'make_nonlinearity.log')
+
+   args = ""
+   for arg in sys.argv:
+       args += " " + arg
+   logger.info("Running: python " + args)
+
+   exptblfile = sys.argv[1]
+   calfile = sys.argv[2]
+   logger.info("Exposure Table 2 file: {}".format(exptblfile))
+   logger.info("Non-linearity coefficients file: {}".format(calfile))
+
+   logger.info("Making simulated data for non-linearity...")
+   execute(exptblfile, calfile) 
+

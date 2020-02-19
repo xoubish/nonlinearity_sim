@@ -1,5 +1,6 @@
 # Large file
 sc456_crRejectSF.fits
+*.fits
 
 # Folder view configuration files
 .DS_Store

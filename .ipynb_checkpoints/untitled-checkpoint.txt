@@ -1,0 +1,2 @@
+1) readnoise only positive? 
+2) Why the averaging is droped for the first group
